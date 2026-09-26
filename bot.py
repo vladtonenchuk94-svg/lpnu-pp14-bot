@@ -25,22 +25,19 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    # Точні реальні дані для Львова в реальному часі
-    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code"
+    # Додали параметри для свіжих даних у реальному часі
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto"
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
       temp = round(data["current"]["temperature_2m"])
       code = data["current"]["weather_code"]
 
-      # Визначення опису за кодом погоди WMO
       desc = "Ясно"
       if code in [1, 2, 3]:
         desc = "Мінливо хмарно"
       elif code >= 51 and code <= 67:
         desc = "Дощ"
-      elif code >= 71 and code <= 77:
-        desc = "Сніг"
 
       return f"{desc}|+{temp}°C" if temp > 0 else f"{desc}|{temp}°C"
   except Exception:
@@ -50,7 +47,7 @@ def get_lviv_weather_full():
 
 def get_lviv_weather():
   try:
-    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code"
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto"
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
@@ -67,7 +64,7 @@ def get_lviv_weather():
       return f"🌤 Львів: {condition}, {temp_str}"
   except Exception:
     pass
-  return "🌤 помилка"
+  return "🌤 Львів: ..."
 
 
 def get_current_week_type(target_date=None):
