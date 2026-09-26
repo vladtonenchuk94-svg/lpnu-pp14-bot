@@ -13,6 +13,7 @@ dp = Dispatcher()
 
 USER_CHAT_ID = None
 
+
 LESSONS_END_TIMES = {
     1: 9 * 60 + 50,  # 09:50
     2: 11 * 60 + 25,  # 11:25
