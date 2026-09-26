@@ -25,26 +25,43 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    url = 'https://wttr.in/Lviv?format=%C|%t&m'
-    headers = {'User-Agent': 'curl'}
-    response = requests.get(url, headers=headers, timeout=5)
+    # Open-Meteo API для Львова (автоматично в Цельсіях)
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&current=temperature_2m,weather_code"
+    response = requests.get(url, timeout=5)
     if response.status_code == 200:
-      return response.text.strip()
+      data = response.json()
+      temp = data['current']['temperature_2m']
+      code = data['current']['weather_code']
+      # Проста мапа погодних кодів (WMO)
+      desc = "Ясно" if code == 0 else "Хмарно" if code >= 1 and code <= 3 else "Дощ"
+      return f"{desc}|{temp}°C"
   except Exception:
     pass
-  return ''
-
+  return ""
 
 def get_lviv_weather():
   try:
-    url = 'https://wttr.in/Lviv?format=3&m'
-    headers = {'User-Agent': 'curl'}
-    response = requests.get(url, headers=headers, timeout=5)
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&current=temperature_2m,weather_code"
+    response = requests.get(url, timeout=5)
     if response.status_code == 200:
-      return f'🌤 {response.text.strip()}'
+      data = response.json()
+      temp = data['current']['temperature_2m']
+      code = data['current']['weather_code']
+      
+      # Короткий опис для мінімалістичного інтерфейсу
+      if code == 0:
+        condition = "Сонячно"
+      elif code in [1, 2, 3]:
+        condition = "Хмарно"
+      elif code >= 51 and code <= 67:
+        condition = "Дощ"
+      else:
+        condition = "Мінливо"
+        
+      return f"🌤 Львів: {condition}, {temp}°C"
   except Exception:
     pass
-  return '⚠️ Погода недоступна'
+  return "🌤 Львів: погода недоступна"
 
 def get_current_week_type(target_date=None):
   if target_date is None:
