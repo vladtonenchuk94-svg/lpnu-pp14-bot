@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import requests
 
-API_TOKEN = '8654263922:AAFmHBjGczqYKi0h4EvnZwf0EyNiphYxrbc'
+API_TOKEN = 'ТВОЇЙ_ТОКЕН_БОТА'
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
@@ -25,22 +25,7 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    # Використовуємо формат зі знаком градуса Цельсія безпосередньо у запиті
     url = 'https://wttr.in/Lviv?format=%C|%t'
-    headers = {'User-Agent': 'curl/7.68.0'}
-    response = requests.get(url, headers=headers, timeout=5)
-    if response.status_code == 200:
-      return response.text.strip()
-  except Exception:
-    pass
-  return ''
-
-
-
-def get_lviv_weather_full():
-  try:
-    # Використовуємо інший стабільний формат wttr.in з явним шлюзом
-    url = 'https://wttr.in/Lviv?format=%C+%t'
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       return response.text.strip()
@@ -55,15 +40,11 @@ def get_lviv_weather():
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       text = response.text.strip()
-      # Гарантовано конвертуємо у звичні градуси, якщо сервер раптом видасть імперські одиниці
-      if '°F' in text:
-        # Приблизна конвертація на випадок якщо Fahrenheit проскочить,
-        # але на європейському сервері (Нідерланди) тепер має йти одразу Цельсій
-        pass
       return f'🌤 {text}'
   except Exception:
     pass
-  return '🌤 Львів: +20°C'  # Запасний варіант, щоб ніколи не писало "недоступна"
+  return '🌤 Львів: погода стабільна'
+
 
 def get_current_week_type(target_date=None):
   if target_date is None:
@@ -259,7 +240,6 @@ async def send_day_schedule(message: types.Message, day_name: str):
         subj = l['subject'].replace(', частина 1', '').replace(
             ', частина 2', ''
         )
-        # Виводимо ультра-чисто без підказок у щоденному перегляді
         response += (
             f"\n🔹 **{l['lesson_num']}. {subj}**\n"
             f"   `{l['details']}`\n"
@@ -312,9 +292,7 @@ async def morning_briefing_task():
       continue
 
     now = datetime.now()
-    # Рівно о 07:30 ранку
     if now.hour == 7 and now.minute == 30:
-      today_str = now.strftime('%Y-%m-%d')
       if not sent_today:
         sent_today = True
 
@@ -324,15 +302,12 @@ async def morning_briefing_task():
         if current_day_str in ['Сб', 'Нд']:
           continue
 
-        # Аналіз погоди для парасольки
         weather_raw = get_lviv_weather_full().lower()
         umbrella_needed = any(
             w in weather_raw for w in ['rain', 'drizzle', 'дощ', 'злива']
         )
-
         weather_msg = get_lviv_weather()
 
-        # Збираємо поради на день
         try:
           with open('schedule.json', 'r', encoding='utf-8') as f:
             schedule = json.load(f)
@@ -399,7 +374,6 @@ async def morning_briefing_task():
             parse_mode='Markdown',
         )
     else:
-      # Скидаємо прапорець наступного дня
       if now.hour == 8:
         sent_today = False
 
@@ -494,7 +468,7 @@ async def schedule_checker():
 
 
 async def main():
-  print('Бот успішно запущено з ранковим зведенням о 07:30!')
+  print('Бот успішно запущено у хмарі!')
   asyncio.create_task(schedule_checker())
   asyncio.create_task(morning_briefing_task())
   await dp.start_polling(bot)
