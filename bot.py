@@ -31,7 +31,7 @@ def get_lviv_weather_full():
     if response.status_code == 200:
       data = response.json()
       # Віднімаємо 3 градуси корекції для реальної температури на місці
-      temp = round(data["current"]["temperature_2m"]) - 2
+      temp = round(data["current"]["temperature_2m"]) - 20
       code = data["current"]["weather_code"]
 
       desc = "Ясно"
