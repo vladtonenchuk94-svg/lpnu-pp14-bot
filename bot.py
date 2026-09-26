@@ -24,66 +24,47 @@ LESSONS_END_TIMES = {
 }
 
 
-def get_lviv_weather():
+def get_lviv_weather_full():
   try:
-    # Отримуємо поточну погоду + годинний прогноз на сьогодні
-    url = (
-        'https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&hourly=temperature_2m,weather_code,wind_speed_10m&forecast_days=1&timezone=auto'
-    )
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto"
     response = requests.get(url, timeout=5)
-
     if response.status_code == 200:
       data = response.json()
+      temp = round(data["current"]["temperature_2m"])
+      code = data["current"]["weather_code"]
 
-      # Поточна температура (з нашою корекцією -3°C)
-      curr_temp = round(data['current']['temperature_2m']) - 3
-      curr_code = data['current']['weather_code']
+      desc = "Ясно"
+      if code in [1, 2, 3]:
+        desc = "Мінливо хмарно"
+      elif code >= 51 and code <= 67:
+        desc = "Дощ"
 
-      # Аналіз годинного прогнозу на денні години (з 08:00 до 20:00)
-      hourly_codes = data['hourly']['weather_code'][8:21]
-      hourly_winds = data['hourly']['wind_speed_10m'][8:21]
-      hourly_temps = [t - 3 for t in data['hourly']['temperature_2m'][8:21]]
+      return f"{desc}|+{temp}°C" if temp > 0 else f"{desc}|{temp}°C"
+  except Exception:
+    pass
+  return "Clear|+12°C"
 
-      # 1. Перевірка на дощ удень
-      will_rain = any(
-          (code >= 51 and code <= 67) or (code >= 80 and code <= 82)
-          for code in hourly_codes
-      )
 
-      # 2. Перевірка на сильний вітер (> 25 км/год)
-      max_wind = max(hourly_winds) if hourly_winds else 0
-      is_windy = max_wind > 25
+def get_lviv_weather():
+  try:
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto"
+    response = requests.get(url, timeout=5)
+    if response.status_code == 200:
+      data = response.json()
+      temp = round(data["current"]["temperature_2m"])
+      code = data["current"]["weather_code"]
 
-      # 3. Денна температура (мін / макс)
-      max_t = round(max(hourly_temps)) if hourly_temps else curr_temp
+      condition = "Ясно"
+      if code in [1, 2, 3]:
+        condition = "Хмарно"
+      elif code >= 51 and code <= 67:
+        condition = "Дощ"
 
-      # Формуємо базовий статус
-      condition = 'Ясно'
-      if curr_code in [1, 2, 3]:
-        condition = 'Хмарно'
-      elif curr_code >= 51:
-        condition = 'Дощ'
-
-      temp_str = f'+{curr_temp}°C' if curr_temp > 0 else f'{curr_temp}°C'
-      msg = f'🌤 **Львів зараз:** {condition}, {temp_str} (вдень до +{max_t}°C)'
-
-      # Додаємо розумні попередження
-      warnings = []
-      if will_rain and curr_code < 51:
-        warnings.append('☂️ Пізніше очікується дощ — візьми парасольку!')
-      if is_windy:
-        warnings.append(
-            f'💨 Пообіді буде сильний вітер (до {round(max_wind)} км/год).'
-        )
-
-      if warnings:
-        msg += '\n\n💡 **Порада на день:**\n• ' + '\n• '.join(warnings)
-
-      return msg
-  except Exception as e:
-    print(f'Помилка погоди: {e}')
-
-  return '🌤 Львів: +13°C (стабільно)'
+      temp_str = f"+{temp}°C" if temp > 0 else f"{temp}°C"
+      return f"🌤 Львів: {condition}, {temp_str}"
+  except Exception:
+    pass
+  return "🌤 Львів: +12°C"
 
 def get_current_week_type(target_date=None):
   if target_date is None:
