@@ -25,9 +25,9 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    # Запит із примусовим метричним параметром прямо після назви міста
-    url = 'https://wttr.in/Lviv?m&format=%C|%t'
-    response = requests.get(url, timeout=5)
+    url = 'https://wttr.in/Lviv?format=%C|%t&m'
+    headers = {'User-Agent': 'curl'}
+    response = requests.get(url, headers=headers, timeout=5)
     if response.status_code == 200:
       return response.text.strip()
   except Exception:
@@ -37,9 +37,9 @@ def get_lviv_weather_full():
 
 def get_lviv_weather():
   try:
-    # Метрична система через ?m перед форматом
-    url = 'https://wttr.in/Lviv?m&format=3'
-    response = requests.get(url, timeout=5)
+    url = 'https://wttr.in/Lviv?format=3&m'
+    headers = {'User-Agent': 'curl'}
+    response = requests.get(url, headers=headers, timeout=5)
     if response.status_code == 200:
       return f'🌤 {response.text.strip()}'
   except Exception:
