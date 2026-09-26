@@ -25,8 +25,8 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    # Отримуємо погоду для аналізу чи потрібна парасолька
-    url = 'https://wttr.in/Lviv?format=%C|%t'
+    # Додали параметр ?m для одиниць вимірювання в метричній системі (Celsius)
+    url = 'https://wttr.in/Lviv?format=%C|%t&m'
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       return response.text.strip()
@@ -37,14 +37,14 @@ def get_lviv_weather_full():
 
 def get_lviv_weather():
   try:
-    url = 'https://wttr.in/Lviv?format=3'
+    # Додали ?m на кінці URL
+    url = 'https://wttr.in/Lviv?format=3&m'
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       return f'🌤 {response.text.strip()}'
   except Exception:
     pass
   return '⚠️ Погода недоступна'
-
 
 def get_current_week_type(target_date=None):
   if target_date is None:
