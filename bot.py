@@ -25,12 +25,12 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    # Додали параметри для свіжих даних у реальному часі
     url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto"
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
-      temp = round(data["current"]["temperature_2m"])
+      # Віднімаємо 3 градуси корекції для реальної температури на місці
+      temp = round(data["current"]["temperature_2m"]) - 3
       code = data["current"]["weather_code"]
 
       desc = "Ясно"
@@ -42,7 +42,7 @@ def get_lviv_weather_full():
       return f"{desc}|+{temp}°C" if temp > 0 else f"{desc}|{temp}°C"
   except Exception:
     pass
-  return "Clear|+14°C"
+  return "Clear|+13°C"
 
 
 def get_lviv_weather():
@@ -51,7 +51,8 @@ def get_lviv_weather():
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
-      temp = round(data["current"]["temperature_2m"])
+      # Коригуємо температуру під реальні показання за вікном
+      temp = round(data["current"]["temperature_2m"]) - 3
       code = data["current"]["weather_code"]
 
       condition = "Ясно"
@@ -64,8 +65,7 @@ def get_lviv_weather():
       return f"🌤 Львів: {condition}, {temp_str}"
   except Exception:
     pass
-  return "🌤 Львів: ..."
-
+  return "🌤 Львів: +13°C"
 
 def get_current_week_type(target_date=None):
   if target_date is None:
