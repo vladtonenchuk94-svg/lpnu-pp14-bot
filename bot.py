@@ -25,43 +25,31 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    # Open-Meteo API для Львова (автоматично в Цельсіях)
-    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&current=temperature_2m,weather_code"
-    response = requests.get(url, timeout=5)
+    # Використовуємо формат зі знаком градуса Цельсія безпосередньо у запиті
+    url = 'https://wttr.in/Lviv?format=%C|%t'
+    headers = {'User-Agent': 'curl/7.68.0'}
+    response = requests.get(url, headers=headers, timeout=5)
     if response.status_code == 200:
-      data = response.json()
-      temp = data['current']['temperature_2m']
-      code = data['current']['weather_code']
-      # Проста мапа погодних кодів (WMO)
-      desc = "Ясно" if code == 0 else "Хмарно" if code >= 1 and code <= 3 else "Дощ"
-      return f"{desc}|{temp}°C"
+      return response.text.strip()
   except Exception:
     pass
-  return ""
+  return ''
+
 
 def get_lviv_weather():
   try:
-    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&current=temperature_2m,weather_code"
-    response = requests.get(url, timeout=5)
+    # Примусово запитуємо через формат wttr.in з метео-параметром
+    url = 'https://wttr.in/Lviv?format=3'
+    headers = {'User-Agent': 'curl/7.68.0'}
+    response = requests.get(url, headers=headers, timeout=5)
     if response.status_code == 200:
-      data = response.json()
-      temp = data['current']['temperature_2m']
-      code = data['current']['weather_code']
-      
-      # Короткий опис для мінімалістичного інтерфейсу
-      if code == 0:
-        condition = "Сонячно"
-      elif code in [1, 2, 3]:
-        condition = "Хмарно"
-      elif code >= 51 and code <= 67:
-        condition = "Дощ"
-      else:
-        condition = "Мінливо"
-        
-      return f"🌤 Львів: {condition}, {temp}°C"
+      text = response.text.strip()
+      # Якщо раптом сервер США все одно підставить 'F', замінюємо примусово на 'C'
+      text = text.replace('°F', '°C')
+      return f'🌤 {text}'
   except Exception:
     pass
-  return "🌤 Львів: погода недоступна"
+  return '⚠️ Погода недоступна'
 
 def get_current_week_type(target_date=None):
   if target_date is None:
