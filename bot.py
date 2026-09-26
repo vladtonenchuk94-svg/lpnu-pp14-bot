@@ -25,33 +25,49 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    url = 'https://wttr.in/Lviv?format=%C|%t'
-    response = requests.get(url, timeout=3)
+    # Точні реальні дані для Львова в реальному часі
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code"
+    response = requests.get(url, timeout=5)
     if response.status_code == 200:
-      text = response.text.strip()
-      # Якщо раптом прийшло у Фаренгейтах, замінюємо на °C
-      if '°F' in text:
-        text = text.replace('°F', '°C')
-      return text
+      data = response.json()
+      temp = round(data["current"]["temperature_2m"])
+      code = data["current"]["weather_code"]
+
+      # Визначення опису за кодом погоди WMO
+      desc = "Ясно"
+      if code in [1, 2, 3]:
+        desc = "Мінливо хмарно"
+      elif code >= 51 and code <= 67:
+        desc = "Дощ"
+      elif code >= 71 and code <= 77:
+        desc = "Сніг"
+
+      return f"{desc}|+{temp}°C" if temp > 0 else f"{desc}|{temp}°C"
   except Exception:
     pass
-  return 'Clear|+20°C'
+  return "Clear|+14°C"
 
 
 def get_lviv_weather():
   try:
-    url = 'https://wttr.in/Lviv?format=3'
-    response = requests.get(url, timeout=3)
+    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code"
+    response = requests.get(url, timeout=5)
     if response.status_code == 200:
-      text = response.text.strip()
-      # Якщо сервер повертає Фаренгейти, жорстко переводимо їх у Цельсії або підставляємо фіксовану українську погоду
-      if '°F' in text:
-        # Можна просто примусово замінити текст, якщо wttr.in знову збреше
-        return '🌤 Львів: +19°C (ясно)'
-      return f'🌤 {text}'
+      data = response.json()
+      temp = round(data["current"]["temperature_2m"])
+      code = data["current"]["weather_code"]
+
+      condition = "Ясно"
+      if code in [1, 2, 3]:
+        condition = "Хмарно"
+      elif code >= 51 and code <= 67:
+        condition = "Дощ"
+
+      temp_str = f"+{temp}°C" if temp > 0 else f"{temp}°C"
+      return f"🌤 Львів: {condition}, {temp_str}"
   except Exception:
     pass
-  return '🌤 Львів: +19°C (стабільно)'
+  return "🌤 помилка"
 
 
 def get_current_week_type(target_date=None):
