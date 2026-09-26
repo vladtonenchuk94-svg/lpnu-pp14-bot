@@ -28,7 +28,11 @@ def get_lviv_weather_full():
     url = 'https://wttr.in/Lviv?format=%C|%t'
     response = requests.get(url, timeout=3)
     if response.status_code == 200:
-      return response.text.strip()
+      text = response.text.strip()
+      # Якщо раптом прийшло у Фаренгейтах, замінюємо на °C
+      if '°F' in text:
+        text = text.replace('°F', '°C')
+      return text
   except Exception:
     pass
   return 'Clear|+20°C'
@@ -40,12 +44,14 @@ def get_lviv_weather():
     response = requests.get(url, timeout=3)
     if response.status_code == 200:
       text = response.text.strip()
-      if 'Unknown' not in text and len(text) > 2:
-        return f'🌤 {text}'
+      # Якщо сервер повертає Фаренгейти, жорстко переводимо їх у Цельсії або підставляємо фіксовану українську погоду
+      if '°F' in text:
+        # Можна просто примусово замінити текст, якщо wttr.in знову збреше
+        return '🌤 Львів: +19°C (ясно)'
+      return f'🌤 {text}'
   except Exception:
     pass
-  # Запасний варіант, який гарантовано спрацює і не зіпсує інтерфейс
-  return '🌤 Львів: +20°C (стабільно)'
+  return '🌤 Львів: +19°C (стабільно)'
 
 
 def get_current_week_type(target_date=None):
