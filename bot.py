@@ -30,7 +30,7 @@ def get_lviv_weather_full():
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
-      temp = round(data["current"]["temperature_2m"]) - 3
+      temp = round(data["current"]["temperature_2m"]) - 1
       code = data["current"]["weather_code"]
 
       desc = "Ясно"
@@ -51,7 +51,7 @@ def get_lviv_weather():
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
-      temp = round(data["current"]["temperature_2m"]) - 3
+      temp = round(data["current"]["temperature_2m"]) - 1
       code = data["current"]["weather_code"]
 
       condition = "Ясно"
