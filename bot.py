@@ -10,6 +10,7 @@ import requests
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.exceptions import TelegramBadRequest
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger('schedule_bot')
@@ -365,6 +366,35 @@ def get_main_keyboard():
 
     builder.attach(days_builder)
     return builder.as_markup()
+async def show(message: types.Message, text: str, edit: bool = False):
+    """edit=True: замінює поточне повідомлення, інакше надсилає нове."""
+    kb = get_main_keyboard()
+    if edit:
+        try:
+            await message.edit_text(text, reply_markup=kb, parse_mode='HTML')
+            return
+        except TelegramBadRequest as e:
+            if 'message is not modified' in str(e):
+                return  # натиснули ту саму кнопку, текст не змінився
+            log.warning('Не вдалося відредагувати, надсилаю нове: %s', e)
+    await message.answer(text, reply_markup=kb, parse_mode='HTML')
+
+
+LAST_AUTO_MSG = {}
+
+
+async def send_auto(chat_id, text):
+    """Автоповідомлення: видаляє попереднє й надсилає нове (щоб прийшов звук)."""
+    old = LAST_AUTO_MSG.get(chat_id)
+    if old:
+        try:
+            await bot.delete_message(chat_id, old)
+        except Exception:
+            pass  # вже видалене або старше 48 годин
+    sent = await bot.send_message(
+        chat_id, text, reply_markup=get_main_keyboard(), parse_mode='HTML'
+    )
+    LAST_AUTO_MSG[chat_id] = sent.message_id
 
 
 # ---------- хендлери ----------
@@ -381,24 +411,20 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(F.data == 'weather')
 async def cb_weather(callback: types.CallbackQuery):
     text = await asyncio.to_thread(get_weather_report)
-    await callback.message.answer(
-        text, reply_markup=get_main_keyboard(), parse_mode='HTML'
-    )
+    await show(callback.message, text, edit=True)
     await callback.answer()
 
 
 @dp.message(Command('weather'))
 async def cmd_weather(message: types.Message):
     text = await asyncio.to_thread(get_weather_report)
-    await message.answer(
-        text, reply_markup=get_main_keyboard(), parse_mode='HTML'
-    )
+    await show(message, text)
 
 
 @dp.callback_query(F.data == 'schedule_all')
 async def cb_schedule_all(callback: types.CallbackQuery):
     remember_chat(callback.message.chat.id)
-    await send_full_schedule(callback.message)
+    await send_full_schedule(callback.message, edit=True)
     await callback.answer()
 
 
@@ -412,10 +438,8 @@ async def cb_day_select(callback: types.CallbackQuery):
         day = get_tomorrow_short_name()
     else:
         day = code
-    await send_day_schedule(callback.message, day)
+    await send_day_schedule(callback.message, day, edit=True)
     await callback.answer()
-
-
 
 
 @dp.message(Command('today'))
@@ -435,8 +459,7 @@ async def cmd_schedule(message: types.Message):
     remember_chat(message.chat.id)
     await send_full_schedule(message)
 
-
-async def send_day_schedule(message: types.Message, day_name: str):
+async def send_day_schedule(message: types.Message, day_name: str, edit: bool = False):
     try:
         week = get_week_type()
         response = f'📌 <b>{day_name}</b> • <i>{week}</i>\n'
@@ -455,18 +478,16 @@ async def send_day_schedule(message: types.Message, day_name: str):
                     f"\n🔹 <b>{l['lesson_num']}. {clean_subject(l['subject'])}</b>\n"
                     f"   <code>{html.escape(l['details'])}</code>\n"
                 )
-        await message.answer(
-            response, reply_markup=get_main_keyboard(), parse_mode='HTML'
-        )
+        await show(message, response, edit)
     except FileNotFoundError:
-        await message.answer('⚠️ Файл розкладу не знайдено!')
+        await show(message, '⚠️ Файл розкладу не знайдено!', edit)
 
 
-async def send_full_schedule(message: types.Message):
+async def send_full_schedule(message: types.Message, edit: bool = False):
     try:
         schedule = load_schedule()
     except FileNotFoundError:
-        await message.answer('⚠️ Файл розкладу не знайдено!')
+        await show(message, '⚠️ Файл розкладу не знайдено!', edit)
         return
 
     parts = ['📚 <b>Розклад (ПП-14):</b>\n']
@@ -487,6 +508,30 @@ async def send_full_schedule(message: types.Message):
                 )
             parts.append(block)
 
+    text = ''.join(parts)
+    if len(text) <= 4000:  # звичайний випадок: одне повідомлення
+        await show(message, text, edit)
+        return
+
+    # дуже довгий розклад: кілька повідомлень (редагувати нема що)
+    if edit:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+    chunk, chunks = '', []
+    for p in parts:
+        if len(chunk) + len(p) > 3500:
+            chunks.append(chunk)
+            chunk = ''
+        chunk += p
+    chunks.append(chunk)
+    for i, c in enumerate(chunks):
+        await message.answer(
+            c,
+            reply_markup=get_main_keyboard() if i == len(chunks) - 1 else None,
+            parse_mode='HTML',
+        )
     # ділимо по блоках, щоб не ламати HTML-теги
     chunk = ''
     chunks = []
@@ -548,8 +593,7 @@ async def morning_briefing_task():
                 f'👕 <b>Що вдягнути:</b>\n{outfit}\n\n'
                 f'💡 <b>Що взяти на пари сьогодні:</b>\n• {advice}'
             )
-            await bot.send_message(
-                chat_id, msg, reply_markup=get_main_keyboard(), parse_mode='HTML'
+                await send_auto(chat_id, msg)
             )
             sent_dates.add(today)  # позначаємо тільки після успішної відправки
             log.info('Ранкове зведення надіслано')
@@ -601,8 +645,7 @@ async def schedule_checker():
                     msg = '⏰ <b>За 15 хв кінець пари!</b> На сьогодні все! 🎉'
 
                 try:
-                    await bot.send_message(
-                        chat_id, msg, reply_markup=get_main_keyboard(), parse_mode='HTML'
+                    await send_auto(chat_id, msg)
                     )
                     sent.add(key)
                     log.info('Нагадування %s надіслано', key)
