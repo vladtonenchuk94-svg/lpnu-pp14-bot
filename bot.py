@@ -94,19 +94,184 @@ def _fetch_weather():
     return round(cur['temperature_2m']) - 1, cur['weather_code']
 
 
-def get_lviv_weather():
+WEATHER_URL = (
+    'https://api.open-meteo.com/v1/forecast'
+    '?latitude=49.8383&longitude=24.0232'
+    '&current=temperature_2m,apparent_temperature,relative_humidity_2m,'
+    'weather_code,wind_speed_10m'
+    '&hourly=temperature_2m,precipitation_probability,weather_code'
+    '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,'
+    'uv_index_max,sunrise,sunset'
+    '&wind_speed_unit=ms&timezone=Europe%2FKyiv&forecast_days=1'
+)
+TEMP_CORRECTION = -1  # твоя поправка до температури, як було в старому коді
+HOURLY_SLOTS = (9, 12, 15, 18, 21)
+
+
+def _t(v):
+    return round(v) + TEMP_CORRECTION
+
+
+def fmt_temp(n):
+    return f'+{n}°C' if n > 0 else f'{n}°C'
+
+
+def describe_code(code):
+    if code == 0:
+        return '☀️', 'Ясно'
+    if code == 1:
+        return '🌤', 'Переважно ясно'
+    if code == 2:
+        return '⛅', 'Мінлива хмарність'
+    if code == 3:
+        return '☁️', 'Хмарно'
+    if code in (45, 48):
+        return '🌫', 'Туман'
+    if code in (51, 53, 55):
+        return '🌦', 'Мряка'
+    if code in (56, 57, 66, 67):
+        return '🌧', 'Крижаний дощ'
+    if code in (61, 63, 65):
+        return '🌧', 'Дощ'
+    if code in (71, 73, 75, 77, 85, 86):
+        return '❄️', 'Сніг'
+    if code in (80, 81, 82):
+        return '🌦', 'Зливи'
+    if code in (95, 96, 99):
+        return '⛈', 'Гроза'
+    return '🌡', 'Мінлива погода'
+
+
+def is_rainy(code):
+    return 51 <= code <= 67 or 80 <= code <= 82 or code >= 95
+
+
+def is_snowy(code):
+    return code in (71, 73, 75, 77, 85, 86)
+
+
+def get_weather_data():
+    r = requests.get(WEATHER_URL, timeout=8)
+    r.raise_for_status()
+    j = r.json()
+    cur, d, h = j['current'], j['daily'], j['hourly']
+    hourly = []
+    for i, ts in enumerate(h['time']):
+        hourly.append((
+            int(ts[11:13]),
+            _t(h['temperature_2m'][i]),
+            h['precipitation_probability'][i] or 0,
+            h['weather_code'][i],
+        ))
+    return {
+        'temp': _t(cur['temperature_2m']),
+        'feels': _t(cur['apparent_temperature']),
+        'humidity': round(cur['relative_humidity_2m']),
+        'wind': cur['wind_speed_10m'],
+        'code': cur['weather_code'],
+        'tmax': _t(d['temperature_2m_max'][0]),
+        'tmin': _t(d['temperature_2m_min'][0]),
+        'pop': d['precipitation_probability_max'][0] or 0,
+        'uv': d['uv_index_max'][0] or 0,
+        'sunrise': d['sunrise'][0][11:16],
+        'sunset': d['sunset'][0][11:16],
+        'hourly': hourly,
+    }
+
+
+def build_outfit(w):
+    feels = w['feels']
+    if feels <= -10:
+        lines = ['🧥 Зимова куртка, шапка, шарф, рукавиці, теплі черевики']
+    elif feels <= 0:
+        lines = ['🧥 Зимова куртка, шапка, шарф, рукавиці']
+    elif feels <= 7:
+        lines = ['🧥 Тепла куртка чи пальто, шапка і шарф за вітру']
+    elif feels <= 13:
+        lines = ['🧥 Демісезонна куртка, светр чи худі']
+    elif feels <= 18:
+        lines = ['🧶 Легка куртка чи худі']
+    elif feels <= 23:
+        lines = ['👕 Футболка і легка кофта про запас']
+    else:
+        lines = ['👕 Легкий одяг, більше води']
+
+    if w['pop'] >= 50 or is_rainy(w['code']):
+        lines.append('☂️ Візьми парасольку, взуття краще непромокаюче')
+    elif w['pop'] >= 30:
+        lines.append('🌂 Можливий дощ, парасолька не завадить')
+    if is_snowy(w['code']):
+        lines.append('🥾 Тепле взуття, що не ковзає')
+    if w['wind'] >= 8:
+        lines.append('💨 Сильний вітер, краще вітрозахисна куртка')
+    if w['uv'] >= 6 and w['tmax'] > 10:
+        lines.append('🕶 Сонцезахисні окуляри')
+    if w['tmax'] - w['tmin'] >= 8:
+        lines.append('🧅 Різниця за день велика, вдягайся шарами')
+    return lines
+
+
+def build_weather_text(w):
+    emoji, desc = describe_code(w['code'])
+    now_hour = datetime.now(KYIV_TZ).hour
+
+    text = (
+        f'🌤 <b>Львів зараз</b>\n'
+        f"{emoji} {desc}, <b>{fmt_temp(w['temp'])}</b>\n"
+        f"🌡 Відчувається як {fmt_temp(w['feels'])} • 💧 {w['humidity']}% • "
+        f"💨 {w['wind']:.0f} м/с\n\n"
+        f"📊 Сьогодні: від {fmt_temp(w['tmin'])} до {fmt_temp(w['tmax'])}\n"
+        f"☔ Ймовірність опадів: {w['pop']}%\n"
+        f"🌅 {w['sunrise']} • 🌇 {w['sunset']}\n"
+    )
+
+    slots = [x for x in w['hourly'] if x[0] in HOURLY_SLOTS and x[0] > now_hour]
+    if slots:
+        text += '\n🕒 <b>По годинах:</b>\n<code>'
+        for hour, temp, pop, code in slots:
+            e, _ = describe_code(code)
+            text += f'{hour:02d}:00  {e} {fmt_temp(temp):>5}  ({pop}%)\n'
+        text += '</code>'
+
+    text += '\n👕 <b>Що вдягнути:</b>\n' + '\n'.join(build_outfit(w))
+    return text
+
+
+def get_weather_report():
+    """Детальний звіт для кнопки/команди «Погода»."""
     try:
-        temp, code = _fetch_weather()
-        cond = 'Ясно'
-        if code in (1, 2, 3):
-            cond = 'Хмарно'
-        elif 51 <= code <= 67 or 80 <= code <= 82:
-            cond = 'Дощ'
-        t = f'+{temp}°C' if temp > 0 else f'{temp}°C'
-        return f'🌤 Львів: {cond}, {t}', cond == 'Дощ'
+        return build_weather_text(get_weather_data())
+    except Exception:
+        log.exception('Помилка погоди')
+        return '🌤 Львів: дані недоступні, спробуй пізніше'
+
+
+def get_lviv_weather():
+    """Короткий варіант (рядок, чи потрібна парасолька), для розкладу."""
+    try:
+        w = get_weather_data()
+        emoji, desc = describe_code(w['code'])
+        rain = w['pop'] >= 50 or is_rainy(w['code'])
+        return f"{emoji} Львів: {desc}, {fmt_temp(w['temp'])}", rain
     except Exception:
         log.exception('Помилка погоди')
         return '🌤 Львів: дані недоступні', False
+
+
+def get_morning_weather():
+    """Для ранкового зведення: рядок погоди, чи потрібна парасолька, поради з одягу."""
+    try:
+        w = get_weather_data()
+        emoji, desc = describe_code(w['code'])
+        line = (
+            f"{emoji} Львів: {desc}, {fmt_temp(w['temp'])} "
+            f"(сьогодні {fmt_temp(w['tmin'])}…{fmt_temp(w['tmax'])})"
+        )
+        rain = w['pop'] >= 50 or is_rainy(w['code'])
+        return line, rain, '\n'.join(build_outfit(w))
+    except Exception:
+        log.exception('Помилка погоди')
+        return '🌤 Львів: дані недоступні', False, '🎒 Одягайся за погодою'
 
 
 # ---------- розклад ----------
@@ -215,9 +380,15 @@ async def cmd_start(message: types.Message):
 
 @dp.callback_query(F.data == 'weather')
 async def cb_weather(callback: types.CallbackQuery):
-    text, _ = await asyncio.to_thread(get_lviv_weather)
-    await callback.message.answer(text)
+    text = await asyncio.to_thread(get_weather_report)
+    await callback.message.answer(text, parse_mode='HTML')
     await callback.answer()
+
+
+@dp.message(Command('weather'))
+async def cmd_weather(message: types.Message):
+    text = await asyncio.to_thread(get_weather_report)
+    await message.answer(text, parse_mode='HTML')
 
 
 @dp.callback_query(F.data == 'schedule_all')
@@ -241,10 +412,6 @@ async def cb_day_select(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@dp.message(Command('weather'))
-async def cmd_weather(message: types.Message):
-    text, _ = await asyncio.to_thread(get_lviv_weather)
-    await message.answer(text)
 
 
 @dp.message(Command('today'))
@@ -354,7 +521,7 @@ async def morning_briefing_task():
 
             day = get_today_short_name()
             week = get_week_type()
-            weather_msg, rain = await asyncio.to_thread(get_lviv_weather)
+            weather_msg, rain, outfit = await asyncio.to_thread(get_morning_weather)
 
             try:
                 recs = {
@@ -374,7 +541,9 @@ async def morning_briefing_task():
             msg = (
                 f'🌅 <b>Доброго ранку! Ранкове зведення</b> ({day}, <i>{week}</i>)\n\n'
                 f'{weather_msg}\n{umbrella}\n\n'
+                f'👕 <b>Що вдягнути:</b>\n{outfit}\n\n'
                 f'💡 <b>Що взяти на пари сьогодні:</b>\n• {advice}'
+            )
             )
             await bot.send_message(
                 chat_id, msg, reply_markup=get_main_keyboard(), parse_mode='HTML'
