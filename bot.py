@@ -544,7 +544,6 @@ async def morning_briefing_task():
                 f'👕 <b>Що вдягнути:</b>\n{outfit}\n\n'
                 f'💡 <b>Що взяти на пари сьогодні:</b>\n• {advice}'
             )
-            )
             await bot.send_message(
                 chat_id, msg, reply_markup=get_main_keyboard(), parse_mode='HTML'
             )
