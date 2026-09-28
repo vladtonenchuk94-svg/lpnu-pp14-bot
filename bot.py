@@ -645,7 +645,6 @@ async def schedule_checker():
 
                 try:
                     await send_auto(chat_id, msg)
-                    )
                     sent.add(key)
                     log.info('Нагадування %s надіслано', key)
                 except Exception:
