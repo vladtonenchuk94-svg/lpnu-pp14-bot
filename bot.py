@@ -381,14 +381,18 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(F.data == 'weather')
 async def cb_weather(callback: types.CallbackQuery):
     text = await asyncio.to_thread(get_weather_report)
-    await callback.message.answer(text, parse_mode='HTML')
+    await callback.message.answer(
+        text, reply_markup=get_main_keyboard(), parse_mode='HTML'
+    )
     await callback.answer()
 
 
 @dp.message(Command('weather'))
 async def cmd_weather(message: types.Message):
     text = await asyncio.to_thread(get_weather_report)
-    await message.answer(text, parse_mode='HTML')
+    await message.answer(
+        text, reply_markup=get_main_keyboard(), parse_mode='HTML'
+    )
 
 
 @dp.callback_query(F.data == 'schedule_all')
