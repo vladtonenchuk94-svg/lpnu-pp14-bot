@@ -1,18 +1,42 @@
 import asyncio
 from datetime import datetime, timedelta
 import json
+import os
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import requests
+from zoneinfo import ZoneInfo
 
 API_TOKEN = '8654263922:AAFmHBjGczqYKi0h4EvnZwf0EyNiphYxrbc'
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
-USER_CHAT_ID = None
+KYIV_TZ = ZoneInfo('Europe/Kyiv')
+CHAT_ID_FILE = 'chat_id.json'
 
+
+def load_chat_id():
+  try:
+    if os.path.exists(CHAT_ID_FILE):
+      with open(CHAT_ID_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        return data.get('chat_id')
+  except Exception:
+    pass
+  return None
+
+
+def save_chat_id(chat_id):
+  try:
+    with open(CHAT_ID_FILE, 'w', encoding='utf-8') as f:
+      json.dump({'chat_id': chat_id}, f)
+  except Exception:
+    pass
+
+
+USER_CHAT_ID = load_chat_id()
 
 LESSONS_END_TIMES = {
     1: 9 * 60 + 50,  # 09:50
@@ -26,49 +50,50 @@ LESSONS_END_TIMES = {
 
 def get_lviv_weather_full():
   try:
-    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto"
+    url = 'https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto'
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
-      temp = round(data["current"]["temperature_2m"]) - 1
-      code = data["current"]["weather_code"]
+      temp = round(data['current']['temperature_2m']) - 1
+      code = data['current']['weather_code']
 
-      desc = "Ясно"
+      desc = 'Ясно'
       if code in [1, 2, 3]:
-        desc = "Мінливо хмарно"
-      elif code >= 51 and code <= 67:
-        desc = "Дощ"
+        desc = 'Мінливо хмарно'
+      elif 51 <= code <= 67:
+        desc = 'Дощ'
 
-      return f"{desc}|+{temp}°C" if temp > 0 else f"{desc}|{temp}°C"
+      return f'{desc}|+{temp}°C' if temp > 0 else f'{desc}|{temp}°C'
   except Exception:
     pass
-  return "Clear|+12°C"
+  return 'Clear|+12°C'
 
 
 def get_lviv_weather():
   try:
-    url = "https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto"
+    url = 'https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto'
     response = requests.get(url, timeout=5)
     if response.status_code == 200:
       data = response.json()
-      temp = round(data["current"]["temperature_2m"]) - 1
-      code = data["current"]["weather_code"]
+      temp = round(data['current']['temperature_2m']) - 1
+      code = data['current']['weather_code']
 
-      condition = "Ясно"
+      condition = 'Ясно'
       if code in [1, 2, 3]:
-        condition = "Хмарно"
-      elif code >= 51 and code <= 67:
-        condition = "Дощ"
+        condition = 'Хмарно'
+      elif 51 <= code <= 67:
+        condition = 'Дощ'
 
-      temp_str = f"+{temp}°C" if temp > 0 else f"{temp}°C"
-      return f"🌤 Львів: {condition}, {temp_str}"
+      temp_str = f'+{temp}°C' if temp > 0 else f'{temp}°C'
+      return f'🌤 Львів: {condition}, {temp_str}'
   except Exception:
     pass
-  return "🌤 Львів: +12°C"
+  return '🌤 Львів: +12°C'
+
 
 def get_current_week_type(target_date=None):
   if target_date is None:
-    now = datetime.now()
+    now = datetime.now(KYIV_TZ)
     if now.weekday() >= 5:
       target_date = now + timedelta(days=2)
     else:
@@ -117,6 +142,7 @@ def get_main_keyboard():
 async def cmd_start(message: types.Message):
   global USER_CHAT_ID
   USER_CHAT_ID = message.chat.id
+  save_chat_id(USER_CHAT_ID)
   current_week = get_current_week_type()
   await message.answer(
       f'🤖 **ПП-14** (2 підгр.) | *{current_week}*\nОбери день 👇',
@@ -160,6 +186,7 @@ async def cmd_weather(message: types.Message):
 async def cmd_today(message: types.Message):
   global USER_CHAT_ID
   USER_CHAT_ID = message.chat.id
+  save_chat_id(USER_CHAT_ID)
   await send_day_schedule(message, get_today_short_name())
 
 
@@ -167,6 +194,7 @@ async def cmd_today(message: types.Message):
 async def cmd_tomorrow(message: types.Message):
   global USER_CHAT_ID
   USER_CHAT_ID = message.chat.id
+  save_chat_id(USER_CHAT_ID)
   await send_day_schedule(message, get_tomorrow_short_name())
 
 
@@ -185,7 +213,7 @@ def get_today_short_name():
       'Saturday': 'Сб',
       'Sunday': 'Нд',
   }
-  return days_map.get(datetime.now().strftime('%A'), 'Пн')
+  return days_map.get(datetime.now(KYIV_TZ).strftime('%A'), 'Пн')
 
 
 def get_tomorrow_short_name():
@@ -198,7 +226,7 @@ def get_tomorrow_short_name():
       'Saturday': 'Нд',
       'Sunday': 'Пн',
   }
-  return days_map.get(datetime.now().strftime('%A'), 'Пн')
+  return days_map.get(datetime.now(KYIV_TZ).strftime('%A'), 'Пн')
 
 
 async def send_day_schedule(message: types.Message, day_name: str):
@@ -309,9 +337,11 @@ async def morning_briefing_task():
   while True:
     await asyncio.sleep(30)
     if not USER_CHAT_ID:
-      continue
+      USER_CHAT_ID = load_chat_id()
+      if not USER_CHAT_ID:
+        continue
 
-    now = datetime.now()
+    now = datetime.now(KYIV_TZ)
     if now.hour == 7 and now.minute == 30:
       if not sent_today:
         sent_today = True
@@ -387,12 +417,15 @@ async def morning_briefing_task():
             f'• {advice_text}'
         )
 
-        await bot.send_message(
-            USER_CHAT_ID,
-            msg,
-            reply_markup=get_main_keyboard(),
-            parse_mode='Markdown',
-        )
+        try:
+          await bot.send_message(
+              USER_CHAT_ID,
+              msg,
+              reply_markup=get_main_keyboard(),
+              parse_mode='Markdown',
+          )
+        except Exception as e:
+          print(f'Помилка відправки ранкового зведення: {e}')
     else:
       if now.hour == 8:
         sent_today = False
@@ -405,9 +438,11 @@ async def schedule_checker():
   while True:
     await asyncio.sleep(30)
     if not USER_CHAT_ID:
-      continue
+      USER_CHAT_ID = load_chat_id()
+      if not USER_CHAT_ID:
+        continue
 
-    now = datetime.now()
+    now = datetime.now(KYIV_TZ)
     current_minutes = now.hour * 60 + now.minute
     current_day_str = get_today_short_name()
     current_week = get_current_week_type()
