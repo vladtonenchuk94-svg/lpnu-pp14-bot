@@ -594,7 +594,6 @@ async def morning_briefing_task():
                 f'💡 <b>Що взяти на пари сьогодні:</b>\n• {advice}'
             )
             await send_auto(chat_id, msg)
-            )
             sent_dates.add(today)  # позначаємо тільки після успішної відправки
             log.info('Ранкове зведення надіслано')
         except Exception:
