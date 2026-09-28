@@ -1,533 +1,457 @@
 import asyncio
-from datetime import datetime, timedelta
+import html
 import json
+import logging
 import os
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import requests
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import requests
-from zoneinfo import ZoneInfo
 
-API_TOKEN = '8654263922:AAFmHBjGczqYKi0h4EvnZwf0EyNiphYxrbc'
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger('schedule_bot')
+
+API_TOKEN = os.getenv('BOT_TOKEN')  # НЕ зберігай токен у коді!
+if not API_TOKEN:
+    raise SystemExit('Задай змінну оточення BOT_TOKEN')
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 KYIV_TZ = ZoneInfo('Europe/Kyiv')
-CHAT_ID_FILE = 'chat_id.json'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CHAT_ID_FILE = os.path.join(BASE_DIR, 'chat_id.json')
+SCHEDULE_FILE = os.path.join(BASE_DIR, 'schedule.json')
+
+LESSONS_END_TIMES = {
+    1: 9 * 60 + 50,
+    2: 11 * 60 + 25,
+    3: 13 * 60 + 0,
+    4: 14 * 60 + 35,
+    5: 16 * 60 + 10,
+    6: 17 * 60 + 45,
+}
+
+MORNING_MINUTE = 7 * 60 + 30
+GRACE = 5  # хвилин "вікна" для надсилання
 
 
+# ---------- chat id ----------
 def load_chat_id():
-  try:
-    if os.path.exists(CHAT_ID_FILE):
-      with open(CHAT_ID_FILE, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        return data.get('chat_id')
-  except Exception:
-    pass
-  return None
+    env = os.getenv('CHAT_ID')  # найнадійніше в хмарі
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            pass
+    try:
+        if os.path.exists(CHAT_ID_FILE):
+            with open(CHAT_ID_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f).get('chat_id')
+    except Exception:
+        log.exception('Не вдалося прочитати chat_id')
+    return None
 
 
 def save_chat_id(chat_id):
-  try:
-    with open(CHAT_ID_FILE, 'w', encoding='utf-8') as f:
-      json.dump({'chat_id': chat_id}, f)
-  except Exception:
-    pass
+    try:
+        with open(CHAT_ID_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'chat_id': chat_id}, f)
+    except Exception:
+        log.exception('Не вдалося зберегти chat_id')
 
 
 USER_CHAT_ID = load_chat_id()
 
-LESSONS_END_TIMES = {
-    1: 9 * 60 + 50,  # 09:50
-    2: 11 * 60 + 25,  # 11:25
-    3: 13 * 60 + 0,  # 13:00
-    4: 14 * 60 + 35,  # 14:35
-    5: 16 * 60 + 10,  # 16:10
-    6: 17 * 60 + 45,  # 17:45
-}
+
+def remember_chat(chat_id):
+    global USER_CHAT_ID
+    if USER_CHAT_ID != chat_id:
+        USER_CHAT_ID = chat_id
+        save_chat_id(chat_id)
+        log.info('chat_id збережено: %s (для хмари задай CHAT_ID у змінних)', chat_id)
 
 
-def get_lviv_weather_full():
-  try:
-    url = 'https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto'
-    response = requests.get(url, timeout=5)
-    if response.status_code == 200:
-      data = response.json()
-      temp = round(data['current']['temperature_2m']) - 1
-      code = data['current']['weather_code']
+def get_chat_id():
+    global USER_CHAT_ID
+    if not USER_CHAT_ID:
+        USER_CHAT_ID = load_chat_id()
+    return USER_CHAT_ID
 
-      desc = 'Ясно'
-      if code in [1, 2, 3]:
-        desc = 'Мінливо хмарно'
-      elif 51 <= code <= 67:
-        desc = 'Дощ'
 
-      return f'{desc}|+{temp}°C' if temp > 0 else f'{desc}|{temp}°C'
-  except Exception:
-    pass
-  return 'Clear|+12°C'
+# ---------- погода ----------
+def _fetch_weather():
+    url = (
+        'https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232'
+        '&current=temperature_2m,weather_code&timezone=auto'
+    )
+    r = requests.get(url, timeout=5)
+    r.raise_for_status()
+    cur = r.json()['current']
+    return round(cur['temperature_2m']) - 1, cur['weather_code']
 
 
 def get_lviv_weather():
-  try:
-    url = 'https://api.open-meteo.com/v1/forecast?latitude=49.8383&longitude=24.0232&current=temperature_2m,weather_code&timezone=auto'
-    response = requests.get(url, timeout=5)
-    if response.status_code == 200:
-      data = response.json()
-      temp = round(data['current']['temperature_2m']) - 1
-      code = data['current']['weather_code']
-
-      condition = 'Ясно'
-      if code in [1, 2, 3]:
-        condition = 'Хмарно'
-      elif 51 <= code <= 67:
-        condition = 'Дощ'
-
-      temp_str = f'+{temp}°C' if temp > 0 else f'{temp}°C'
-      return f'🌤 Львів: {condition}, {temp_str}'
-  except Exception:
-    pass
-  return '🌤 Львів: +12°C'
+    try:
+        temp, code = _fetch_weather()
+        cond = 'Ясно'
+        if code in (1, 2, 3):
+            cond = 'Хмарно'
+        elif 51 <= code <= 67 or 80 <= code <= 82:
+            cond = 'Дощ'
+        t = f'+{temp}°C' if temp > 0 else f'{temp}°C'
+        return f'🌤 Львів: {cond}, {t}', cond == 'Дощ'
+    except Exception:
+        log.exception('Помилка погоди')
+        return '🌤 Львів: дані недоступні', False
 
 
-def get_current_week_type(target_date=None):
-  if target_date is None:
-    now = datetime.now(KYIV_TZ)
-    if now.weekday() >= 5:
-      target_date = now + timedelta(days=2)
-    else:
-      target_date = now
+# ---------- розклад ----------
+def get_week_type(target_date=None):
+    if target_date is None:
+        now = datetime.now(KYIV_TZ)
+        target_date = now + timedelta(days=2) if now.weekday() >= 5 else now
+    return 'Знаменник' if target_date.isocalendar()[1] % 2 != 0 else 'Чисельник'
 
-  week_number = target_date.isocalendar()[1]
-  return 'Знаменник' if week_number % 2 != 0 else 'Чисельник'
+
+get_current_week_type = get_week_type
+
+DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд']
+
+
+def get_today_short_name():
+    return DAYS[datetime.now(KYIV_TZ).weekday()]
+
+
+def get_tomorrow_short_name():
+    return DAYS[(datetime.now(KYIV_TZ).weekday() + 1) % 7]
+
+
+def load_schedule():
+    with open(SCHEDULE_FILE, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def lessons_for(day_name, week):
+    """Фільтрує пари за тижнем і підгрупою (єдине місце замість 3 копій)."""
+    result = []
+    for l in load_schedule().get(day_name, []):
+        w_type = l.get('week_type', '').lower()
+        subgroup = l.get('subgroup', '').lower()
+        subject = l.get('subject', '').lower()
+        details = l.get('details', '').lower()
+
+        if day_name == 'Чт' and 'історія' in subject:
+            if 'лекція' in details and week != 'Чисельник':
+                continue
+            if 'практична' in details and week != 'Знаменник':
+                continue
+
+        right_week = (
+            week.lower() in w_type
+            or 'кож' in w_type
+            or 'об' in w_type
+            or 'загальн' in w_type
+            or not w_type
+        )
+        right_sub = (
+            '2' in subgroup or 'всі' in subgroup or 'вси' in subgroup or not subgroup
+        )
+        if right_week and right_sub:
+            result.append(l)
+    result.sort(key=lambda x: int(x['lesson_num']))
+    return result
+
+
+def clean_subject(s):
+    return html.escape(s.replace(', частина 1', '').replace(', частина 2', ''))
 
 
 def get_recommendation(subject, details):
-  sub_lower = subject.lower()
-  det_lower = details.lower()
-
-  if 'фізичне виховання' in sub_lower:
-    return '👟 Спортивна форма та взуття'
-  elif 'програмування' in sub_lower or 'алгоритмізація' in sub_lower:
-    return '💻 Ноутбук'
-  elif 'фізика' in sub_lower:
-    return '📐 Калькулятор, зошит для лаб'
-  elif 'лекція' in det_lower:
-    return '📓 Зошит для конспекту'
-  elif 'практична' in det_lower:
-    return '✍️ Практичні матеріали'
-  else:
+    sub, det = subject.lower(), details.lower()
+    if 'фізичне виховання' in sub:
+        return '👟 Спортивна форма та взуття'
+    if 'програмування' in sub or 'алгоритмізація' in sub:
+        return '💻 Ноутбук'
+    if 'фізика' in sub:
+        return '📐 Калькулятор, зошит для лаб'
+    if 'лекція' in det:
+        return '📓 Зошит для конспекту'
+    if 'практична' in det:
+        return '✍️ Практичні матеріали'
     return '🎒 Зошит, ручка'
 
 
 def get_main_keyboard():
-  builder = InlineKeyboardBuilder()
-  builder.button(text='📅 Сьогодні', callback_data='day_today')
-  builder.button(text='⏭ Завтра', callback_data='day_tomorrow')
-  builder.button(text='🌤 Погода', callback_data='weather')
-  builder.button(text='📚 Весь розклад', callback_data='schedule_all')
-  builder.adjust(2, 2, 1)
+    builder = InlineKeyboardBuilder()
+    builder.button(text='📅 Сьогодні', callback_data='day_today')
+    builder.button(text='⏭ Завтра', callback_data='day_tomorrow')
+    builder.button(text='🌤 Погода', callback_data='weather')
+    builder.button(text='📚 Весь розклад', callback_data='schedule_all')
+    builder.adjust(2, 2, 1)
 
-  days_builder = InlineKeyboardBuilder()
-  for day in ['Пн', 'Вт', 'Ср', 'Чт', 'Пт']:
-    days_builder.button(text=day, callback_data=f'day_{day}')
-  days_builder.adjust(5)
+    days_builder = InlineKeyboardBuilder()
+    for day in ['Пн', 'Вт', 'Ср', 'Чт', 'Пт']:
+        days_builder.button(text=day, callback_data=f'day_{day}')
+    days_builder.adjust(5)
 
-  builder.attach(days_builder)
-  return builder.as_markup()
+    builder.attach(days_builder)
+    return builder.as_markup()
 
 
+# ---------- хендлери ----------
 @dp.message(Command('start'))
 async def cmd_start(message: types.Message):
-  global USER_CHAT_ID
-  USER_CHAT_ID = message.chat.id
-  save_chat_id(USER_CHAT_ID)
-  current_week = get_current_week_type()
-  await message.answer(
-      f'🤖 **ПП-14** (2 підгр.) | *{current_week}*\nОбери день 👇',
-      reply_markup=get_main_keyboard(),
-      parse_mode='Markdown',
-  )
+    remember_chat(message.chat.id)
+    await message.answer(
+        f'🤖 <b>ПП-14</b> (2 підгр.) | <i>{get_week_type()}</i>\nОбери день 👇',
+        reply_markup=get_main_keyboard(),
+        parse_mode='HTML',
+    )
 
 
 @dp.callback_query(F.data == 'weather')
 async def cb_weather(callback: types.CallbackQuery):
-  await callback.message.answer(get_lviv_weather(), parse_mode='Markdown')
-  await callback.answer()
+    text, _ = await asyncio.to_thread(get_lviv_weather)
+    await callback.message.answer(text)
+    await callback.answer()
 
 
 @dp.callback_query(F.data == 'schedule_all')
 async def cb_schedule_all(callback: types.CallbackQuery):
-  await send_full_schedule(callback.message)
-  await callback.answer()
+    remember_chat(callback.message.chat.id)
+    await send_full_schedule(callback.message)
+    await callback.answer()
 
 
 @dp.callback_query(F.data.startswith('day_'))
 async def cb_day_select(callback: types.CallbackQuery):
-  day_code = callback.data.split('_')[1]
-  if day_code == 'today':
-    day_name = get_today_short_name()
-  elif day_code == 'tomorrow':
-    day_name = get_tomorrow_short_name()
-  else:
-    day_name = day_code
-
-  await send_day_schedule(callback.message, day_name)
-  await callback.answer()
+    remember_chat(callback.message.chat.id)
+    code = callback.data.split('_')[1]
+    if code == 'today':
+        day = get_today_short_name()
+    elif code == 'tomorrow':
+        day = get_tomorrow_short_name()
+    else:
+        day = code
+    await send_day_schedule(callback.message, day)
+    await callback.answer()
 
 
 @dp.message(Command('weather'))
 async def cmd_weather(message: types.Message):
-  await message.answer(get_lviv_weather(), parse_mode='Markdown')
+    text, _ = await asyncio.to_thread(get_lviv_weather)
+    await message.answer(text)
 
 
 @dp.message(Command('today'))
 async def cmd_today(message: types.Message):
-  global USER_CHAT_ID
-  USER_CHAT_ID = message.chat.id
-  save_chat_id(USER_CHAT_ID)
-  await send_day_schedule(message, get_today_short_name())
+    remember_chat(message.chat.id)
+    await send_day_schedule(message, get_today_short_name())
 
 
 @dp.message(Command('tomorrow'))
 async def cmd_tomorrow(message: types.Message):
-  global USER_CHAT_ID
-  USER_CHAT_ID = message.chat.id
-  save_chat_id(USER_CHAT_ID)
-  await send_day_schedule(message, get_tomorrow_short_name())
+    remember_chat(message.chat.id)
+    await send_day_schedule(message, get_tomorrow_short_name())
 
 
 @dp.message(Command('schedule'))
 async def cmd_schedule(message: types.Message):
-  await send_full_schedule(message)
-
-
-def get_today_short_name():
-  days_map = {
-      'Monday': 'Пн',
-      'Tuesday': 'Вт',
-      'Wednesday': 'Ср',
-      'Thursday': 'Чт',
-      'Friday': 'Пт',
-      'Saturday': 'Сб',
-      'Sunday': 'Нд',
-  }
-  return days_map.get(datetime.now(KYIV_TZ).strftime('%A'), 'Пн')
-
-
-def get_tomorrow_short_name():
-  days_map = {
-      'Monday': 'Вт',
-      'Tuesday': 'Ср',
-      'Wednesday': 'Чт',
-      'Thursday': 'Пт',
-      'Friday': 'Сб',
-      'Saturday': 'Нд',
-      'Sunday': 'Пн',
-  }
-  return days_map.get(datetime.now(KYIV_TZ).strftime('%A'), 'Пн')
+    remember_chat(message.chat.id)
+    await send_full_schedule(message)
 
 
 async def send_day_schedule(message: types.Message, day_name: str):
-  try:
-    with open('schedule.json', 'r', encoding='utf-8') as f:
-      schedule = json.load(f)
+    try:
+        week = get_week_type()
+        response = f'📌 <b>{day_name}</b> • <i>{week}</i>\n'
+        if day_name == get_today_short_name():
+            weather, _ = await asyncio.to_thread(get_lviv_weather)
+            response = f'{weather}\n\n' + response
 
-    current_week = get_current_week_type()
-    lessons = schedule.get(day_name, [])
-    weather = (
-        get_lviv_weather() if day_name == get_today_short_name() else ''
-    )
-
-    response = f'📌 **{day_name}** • *{current_week}*\n'
-    if weather:
-      response = f'{weather}\n\n' + response
-
-    if day_name in ['Сб', 'Нд']:
-      response += '\n🎉 Вихідний!'
-      await message.answer(
-          response, reply_markup=get_main_keyboard(), parse_mode='Markdown'
-      )
-      return
-
-    filtered_lessons = []
-    for l in lessons:
-      w_type = l.get('week_type', '').lower()
-      subgroup = l.get('subgroup', '').lower()
-      subject = l.get('subject', '').lower()
-      details = l.get('details', '').lower()
-
-      if day_name == 'Чт' and 'історія' in subject:
-        if 'лекція' in details and current_week != 'Чисельник':
-          continue
-        if 'практична' in details and current_week != 'Знаменник':
-          continue
-
-      is_right_week = (
-          current_week.lower() in w_type
-          or 'кож' in w_type
-          or 'об' in w_type
-          or 'загальн' in w_type
-          or not w_type
-      )
-      is_right_subgroup = (
-          '2' in subgroup
-          or 'всі' in subgroup
-          or 'вси' in subgroup
-          or not subgroup
-      )
-
-      if is_right_week and is_right_subgroup:
-        filtered_lessons.append(l)
-
-    if not filtered_lessons:
-      response += '\n🎉 Пар немає!'
-    else:
-      for l in filtered_lessons:
-        subj = l['subject'].replace(', частина 1', '').replace(
-            ', частина 2', ''
+        if day_name in ('Сб', 'Нд'):
+            response += '\n🎉 Вихідний!'
+        else:
+            lessons = lessons_for(day_name, week)
+            if not lessons:
+                response += '\n🎉 Пар немає!'
+            for l in lessons:
+                response += (
+                    f"\n🔹 <b>{l['lesson_num']}. {clean_subject(l['subject'])}</b>\n"
+                    f"   <code>{html.escape(l['details'])}</code>\n"
+                )
+        await message.answer(
+            response, reply_markup=get_main_keyboard(), parse_mode='HTML'
         )
-        response += (
-            f"\n🔹 **{l['lesson_num']}. {subj}**\n"
-            f"   `{l['details']}`\n"
-        )
-
-    await message.answer(
-        response, reply_markup=get_main_keyboard(), parse_mode='Markdown'
-    )
-  except FileNotFoundError:
-    await message.answer('⚠️ Файл розкладу не знайдено!')
+    except FileNotFoundError:
+        await message.answer('⚠️ Файл розкладу не знайдено!')
 
 
 async def send_full_schedule(message: types.Message):
-  try:
-    with open('schedule.json', 'r', encoding='utf-8') as f:
-      schedule = json.load(f)
-    response = '📚 **Розклад (ПП-14):**\n'
+    try:
+        schedule = load_schedule()
+    except FileNotFoundError:
+        await message.answer('⚠️ Файл розкладу не знайдено!')
+        return
+
+    parts = ['📚 <b>Розклад (ПП-14):</b>\n']
     for day, lessons in schedule.items():
-      day_lessons = [
-          l
-          for l in lessons
-          if '2' in l.get('subgroup', '').lower()
-          or 'всі' in l.get('subgroup', '').lower()
-          or not l.get('subgroup')
-      ]
-      if day_lessons:
-        response += f'\n🔸 **{day}**:\n'
-        for l in day_lessons:
-          subj = l['subject'].replace(', частина 1', '')
-          response += f" • {l['lesson_num']}. {subj} ({l['details']})\n"
+        day_lessons = [
+            l
+            for l in lessons
+            if '2' in l.get('subgroup', '').lower()
+            or 'всі' in l.get('subgroup', '').lower()
+            or not l.get('subgroup')
+        ]
+        if day_lessons:
+            block = f'\n🔸 <b>{html.escape(day)}</b>:\n'
+            for l in day_lessons:
+                block += (
+                    f" • {l['lesson_num']}. {clean_subject(l['subject'])}"
+                    f" ({html.escape(l['details'])})\n"
+                )
+            parts.append(block)
 
-    if len(response) > 4000:
-      for x in range(0, len(response), 4000):
-        await message.answer(response[x : x + 4000], parse_mode='Markdown')
-    else:
-      await message.answer(
-          response, reply_markup=get_main_keyboard(), parse_mode='Markdown'
-      )
-  except FileNotFoundError:
-    await message.answer('⚠️ Файл розкладу не знайдено!')
+    # ділимо по блоках, щоб не ламати HTML-теги
+    chunk = ''
+    chunks = []
+    for p in parts:
+        if len(chunk) + len(p) > 3500:
+            chunks.append(chunk)
+            chunk = ''
+        chunk += p
+    chunks.append(chunk)
+    for i, c in enumerate(chunks):
+        await message.answer(
+            c,
+            reply_markup=get_main_keyboard() if i == len(chunks) - 1 else None,
+            parse_mode='HTML',
+        )
 
 
+# ---------- фонові задачі ----------
 async def morning_briefing_task():
-  global USER_CHAT_ID
-  sent_today = False
-
-  while True:
-    await asyncio.sleep(30)
-    if not USER_CHAT_ID:
-      USER_CHAT_ID = load_chat_id()
-      if not USER_CHAT_ID:
-        continue
-
-    now = datetime.now(KYIV_TZ)
-    if now.hour == 7 and now.minute == 30:
-      if not sent_today:
-        sent_today = True
-
-        current_day_str = get_today_short_name()
-        current_week = get_current_week_type()
-
-        if current_day_str in ['Сб', 'Нд']:
-          continue
-
-        weather_raw = get_lviv_weather_full().lower()
-        umbrella_needed = any(
-            w in weather_raw for w in ['rain', 'drizzle', 'дощ', 'злива']
-        )
-        weather_msg = get_lviv_weather()
-
+    sent_dates = set()
+    while True:
         try:
-          with open('schedule.json', 'r', encoding='utf-8') as f:
-            schedule = json.load(f)
-
-          raw_lessons = schedule.get(current_day_str, [])
-          recommendations = set()
-          for l in raw_lessons:
-            w_type = l.get('week_type', '').lower()
-            subgroup = l.get('subgroup', '').lower()
-            subject = l.get('subject', '').lower()
-            details = l.get('details', '').lower()
-
-            if current_day_str == 'Чт' and 'історія' in subject:
-              if 'лекція' in details and current_week != 'Чисельник':
-                continue
-              if 'практична' in details and current_week != 'Знаменник':
+            await asyncio.sleep(20)
+            chat_id = get_chat_id()
+            if not chat_id:
                 continue
 
-            is_right_week = (
-                current_week.lower() in w_type
-                or 'кож' in w_type
-                or 'об' in w_type
-                or 'загальн' in w_type
-                or not w_type
-            )
-            is_right_subgroup = (
-                '2' in subgroup
-                or 'всі' in subgroup
-                or 'вси' in subgroup
-                or not subgroup
-            )
+            now = datetime.now(KYIV_TZ)
+            today = now.strftime('%Y-%m-%d')
+            cur = now.hour * 60 + now.minute
 
-            if is_right_week and is_right_subgroup:
-              rec = get_recommendation(l['subject'], l['details'])
-              recommendations.add(rec)
+            if today in sent_dates or not (MORNING_MINUTE <= cur < MORNING_MINUTE + GRACE):
+                continue
+            if now.weekday() >= 5:
+                continue
 
-          advice_text = (
-              ', '.join(recommendations)
-              if recommendations
-              else '🎒 Зошит, ручка'
-          )
+            day = get_today_short_name()
+            week = get_week_type()
+            weather_msg, rain = await asyncio.to_thread(get_lviv_weather)
+
+            try:
+                recs = {
+                    get_recommendation(l['subject'], l['details'])
+                    for l in lessons_for(day, week)
+                }
+            except Exception:
+                log.exception('Помилка розкладу у ранковому зведенні')
+                recs = set()
+            advice = ', '.join(sorted(recs)) if recs else '🎒 Зошит, ручка'
+
+            umbrella = (
+                '☂️ Обов’язково візьми парасольку (є дощ)!'
+                if rain
+                else '☀️ Парасолька поки не потрібна.'
+            )
+            msg = (
+                f'🌅 <b>Доброго ранку! Ранкове зведення</b> ({day}, <i>{week}</i>)\n\n'
+                f'{weather_msg}\n{umbrella}\n\n'
+                f'💡 <b>Що взяти на пари сьогодні:</b>\n• {advice}'
+            )
+            await bot.send_message(
+                chat_id, msg, reply_markup=get_main_keyboard(), parse_mode='HTML'
+            )
+            sent_dates.add(today)  # позначаємо тільки після успішної відправки
+            log.info('Ранкове зведення надіслано')
         except Exception:
-          advice_text = '🎒 Зошит, ручка'
-
-        umbrella_text = (
-            '☂️ Обов’язково візьми парасольку (є дощ)!'
-            if umbrella_needed
-            else '☀️ Парасолька поки не потрібна.'
-        )
-
-        msg = (
-            f'🌅 **Доброго ранку! Ранкове зведення** ({current_day_str},'
-            f' *{current_week}*)\n\n'
-            f'{weather_msg}\n'
-            f'{umbrella_text}\n\n'
-            f'💡 **Що взяти на пари сьогодні:**\n'
-            f'• {advice_text}'
-        )
-
-        try:
-          await bot.send_message(
-              USER_CHAT_ID,
-              msg,
-              reply_markup=get_main_keyboard(),
-              parse_mode='Markdown',
-          )
-        except Exception as e:
-          print(f'Помилка відправки ранкового зведення: {e}')
-    else:
-      if now.hour == 8:
-        sent_today = False
+            log.exception('Помилка morning_briefing_task')
 
 
 async def schedule_checker():
-  global USER_CHAT_ID
-  sent_notifications = set()
+    sent = set()
+    while True:
+        try:
+            await asyncio.sleep(20)
+            chat_id = get_chat_id()
+            if not chat_id:
+                continue
 
-  while True:
-    await asyncio.sleep(30)
-    if not USER_CHAT_ID:
-      USER_CHAT_ID = load_chat_id()
-      if not USER_CHAT_ID:
-        continue
+            now = datetime.now(KYIV_TZ)
+            today = now.strftime('%Y-%m-%d')
+            sent = {k for k in sent if k.startswith(today)}
+            if now.weekday() >= 5:
+                continue
 
-    now = datetime.now(KYIV_TZ)
-    current_minutes = now.hour * 60 + now.minute
-    current_day_str = get_today_short_name()
-    current_week = get_current_week_type()
+            cur = now.hour * 60 + now.minute
+            day = get_today_short_name()
+            week = get_week_type()
+            lessons = lessons_for(day, week)
+            if not lessons:
+                continue
+            nums = [int(l['lesson_num']) for l in lessons]
 
-    if current_day_str in ['Сб', 'Нд']:
-      continue
+            for n, end in LESSONS_END_TIMES.items():
+                target = end - 15
+                if not (target <= cur < target + GRACE):
+                    continue
+                if n not in nums:  # зараз пари немає — нагадування не треба
+                    continue
+                key = f'{today}_lesson_{n}'
+                if key in sent:
+                    continue
 
-    for lesson_num_int, end_time in LESSONS_END_TIMES.items():
-      target_time = end_time - 15
+                nxt = next((l for l in lessons if int(l['lesson_num']) > n), None)
+                if nxt:
+                    msg = (
+                        f'⏰ <b>За 15 хв перерва!</b>\n'
+                        f"👉 <b>{nxt['lesson_num']} пара:</b> {clean_subject(nxt['subject'])}\n"
+                        f"📍 {html.escape(nxt['details'])}"
+                    )
+                else:
+                    msg = '⏰ <b>За 15 хв кінець пари!</b> На сьогодні все! 🎉'
 
-      if current_minutes == target_time:
-        notif_key = f"{now.strftime('%Y-%m-%d')}_lesson_{lesson_num_int}"
-
-        if notif_key not in sent_notifications:
-          sent_notifications.add(notif_key)
-
-          try:
-            with open('schedule.json', 'r', encoding='utf-8') as f:
-              schedule = json.load(f)
-
-            raw_lessons = schedule.get(current_day_str, [])
-            lessons = []
-            for l in raw_lessons:
-              w_type = l.get('week_type', '').lower()
-              subgroup = l.get('subgroup', '').lower()
-              subject = l.get('subject', '').lower()
-              details = l.get('details', '').lower()
-
-              if current_day_str == 'Чт' and 'історія' in subject:
-                if 'лекція' in details and current_week != 'Чисельник':
-                  continue
-                if 'практична' in details and current_week != 'Знаменник':
-                  continue
-
-              is_right_week = (
-                  current_week.lower() in w_type
-                  or 'кож' in w_type
-                  or 'об' in w_type
-                  or 'загальн' in w_type
-                  or not w_type
-              )
-              is_right_subgroup = (
-                  '2' in subgroup
-                  or 'всі' in subgroup
-                  or 'вси' in subgroup
-                  or not subgroup
-              )
-
-              if is_right_week and is_right_subgroup:
-                lessons.append(l)
-
-            next_lesson_num = str(lesson_num_int + 1)
-            next_lesson = None
-            for l in lessons:
-              if str(l['lesson_num']) == next_lesson_num:
-                next_lesson = l
-                break
-
-            if next_lesson:
-              subj = next_lesson['subject'].replace(', частина 1', '')
-              msg = (
-                  f'⏰ **За 15 хв перерва!**\n'
-                  f"👉 **{next_lesson['lesson_num']} пара:** {subj}\n"
-                  f"📍 {next_lesson['details']}"
-              )
-            else:
-              msg = '⏰ **За 15 хв кінець пари!** На сьогодні все! 🎉'
-
-            await bot.send_message(
-                USER_CHAT_ID,
-                msg,
-                reply_markup=get_main_keyboard(),
-                parse_mode='Markdown',
-            )
-
-          except Exception as e:
-            print(f'Помилка у фоновому нагадуванні: {e}')
+                try:
+                    await bot.send_message(
+                        chat_id, msg, reply_markup=get_main_keyboard(), parse_mode='HTML'
+                    )
+                    sent.add(key)
+                    log.info('Нагадування %s надіслано', key)
+                except Exception:
+                    log.exception('Не вдалося надіслати нагадування')
+        except Exception:
+            log.exception('Помилка schedule_checker')
 
 
 async def main():
-  print('Бот успішно запущено у хмарі!')
-  asyncio.create_task(schedule_checker())
-  asyncio.create_task(morning_briefing_task())
-  await dp.start_polling(bot)
+    log.info('Бот запущено. chat_id=%s, час Києва: %s', get_chat_id(), datetime.now(KYIV_TZ))
+    tasks = [
+        asyncio.create_task(schedule_checker()),
+        asyncio.create_task(morning_briefing_task()),
+    ]
+    try:
+        await dp.start_polling(bot)
+    finally:
+        for t in tasks:
+            t.cancel()
 
 
 if __name__ == '__main__':
-  asyncio.run(main())
+    asyncio.run(main())
